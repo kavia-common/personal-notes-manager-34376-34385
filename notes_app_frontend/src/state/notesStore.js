@@ -1,43 +1,5 @@
-import React, { createContext, useContext, useEffect, useMemo, useReducer } from "react";
-
-/**
- * Storage helpers
- */
-const STORAGE_KEY = "notes_store_v1";
-
-/**
- * Load notes array from localStorage, return array with shape:
- * { id, title, content, createdAt, updatedAt }
- */
-function loadNotes() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    // Ensure basic shape
-    return parsed
-      .filter(n => n && typeof n.id === "string")
-      .map(n => ({
-        id: n.id,
-        title: n.title || "",
-        content: n.content || "",
-        createdAt: n.createdAt || new Date().toISOString(),
-        updatedAt: n.updatedAt || n.createdAt || new Date().toISOString(),
-      }));
-  } catch (e) {
-    console.warn("Failed to load notes from localStorage", e);
-    return [];
-  }
-}
-
-function saveNotes(notes) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
-  } catch (e) {
-    console.warn("Failed to save notes to localStorage", e);
-  }
-}
+import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef } from "react";
+import * as api from "../services/api";
 
 /**
  * Actions
@@ -64,12 +26,12 @@ function reducer(state, action) {
     }
     case ACTIONS.UPDATE: {
       const upd = action.payload;
-      const notes = state.notes.map(n => (n.id === upd.id ? { ...n, ...upd } : n));
+      const notes = state.notes.map((n) => (n.id === upd.id ? { ...n, ...upd } : n));
       return { ...state, notes };
     }
     case ACTIONS.DELETE: {
       const id = action.payload;
-      const notes = state.notes.filter(n => n.id !== id);
+      const notes = state.notes.filter((n) => n.id !== id);
       return { ...state, notes };
     }
     default:
@@ -83,30 +45,41 @@ export const NotesContext = createContext(null);
 /**
  * PUBLIC_INTERFACE
  * NotesProvider wraps app and exposes store with CRUD actions and derived selectors.
+ * Uses an API layer (mock by default) with Promise-based operations.
  */
 export function NotesProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, { notes: [] });
+  const mountedRef = useRef(true);
 
-  // Initialize from localStorage once
   useEffect(() => {
-    const initial = loadNotes();
-    dispatch({ type: ACTIONS.INIT, payload: initial });
+    mountedRef.current = true;
+    // Initialize from API once (async)
+    api
+      .listNotes()
+      .then((list) => {
+        if (mountedRef.current) {
+          dispatch({ type: ACTIONS.INIT, payload: list });
+        }
+      })
+      .catch((e) => {
+        console.warn("NotesProvider: failed to initialize notes", e);
+        dispatch({ type: ACTIONS.INIT, payload: [] });
+      });
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
-
-  // Persist to localStorage whenever notes change
-  useEffect(() => {
-    saveNotes(state.notes);
-  }, [state.notes]);
 
   // PUBLIC_INTERFACE
   function listNotes({ search } = {}) {
+    // Selector over in-memory state for immediate UI updates
     const q = (search || "").trim().toLowerCase();
     let arr = [...state.notes].sort(
       (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
     );
     if (q) {
       arr = arr.filter(
-        n =>
+        (n) =>
           n.title.toLowerCase().includes(q) ||
           n.content.toLowerCase().includes(q)
       );
@@ -116,41 +89,94 @@ export function NotesProvider({ children }) {
 
   // PUBLIC_INTERFACE
   function getNote(id) {
-    return state.notes.find(n => n.id === id) || null;
+    return state.notes.find((n) => n.id === id) || null;
   }
 
   // PUBLIC_INTERFACE
   function createNote({ title, content }) {
-    const now = new Date().toISOString();
-    const note = {
-      id: cryptoRandomId(),
+    // Optimistic approach: rely on API to generate canonical note with IDs/timestamps
+    // but return a promise result synchronously to match current calling style.
+    const p = api
+      .createNote({ title, content })
+      .then((created) => {
+        dispatch({ type: ACTIONS.CREATE, payload: created });
+        return created;
+      })
+      .catch((e) => {
+        console.warn("createNote failed", e);
+        throw e;
+      });
+
+    // For backward compatibility with existing sync usage, return a placeholder
+    // that will be quickly reconciled when promise resolves.
+    // However, routes currently use the return value immediately.
+    // To preserve behavior, we temporarily create a local placeholder and dispatch,
+    // then reconcile when API returns. Mock service returns quickly with same data format.
+    const tempNow = new Date().toISOString();
+    const temp = {
+      id: "temp_" + Math.random().toString(36).slice(2),
       title: (title || "").trim(),
       content: (content || "").trim(),
-      createdAt: now,
-      updatedAt: now,
+      createdAt: tempNow,
+      updatedAt: tempNow,
     };
-    dispatch({ type: ACTIONS.CREATE, payload: note });
-    return note;
+    // Dispatch optimistic item to keep UI snappy
+    dispatch({ type: ACTIONS.CREATE, payload: temp });
+    // Reconcile on resolve: replace temp by actual created
+    p.then((created) => {
+      if (created && created.id !== temp.id) {
+        dispatch({ type: ACTIONS.DELETE, payload: temp.id });
+        dispatch({ type: ACTIONS.CREATE, payload: created });
+      }
+    }).catch(() => {
+      // rollback optimistic insert
+      dispatch({ type: ACTIONS.DELETE, payload: temp.id });
+    });
+
+    return temp;
   }
 
   // PUBLIC_INTERFACE
   function updateNote(id, { title, content }) {
-    const existing = getNote(id);
-    if (!existing) return null;
-    const now = new Date().toISOString();
-    const updated = {
-      ...existing,
-      title: typeof title === "string" ? title.trim() : existing.title,
-      content: typeof content === "string" ? content.trim() : existing.content,
-      updatedAt: now,
+    const current = getNote(id);
+    if (!current) return null;
+
+    const optimistic = {
+      ...current,
+      title: typeof title === "string" ? title.trim() : current.title,
+      content: typeof content === "string" ? content.trim() : current.content,
+      updatedAt: new Date().toISOString(),
     };
-    dispatch({ type: ACTIONS.UPDATE, payload: updated });
-    return updated;
+    dispatch({ type: ACTIONS.UPDATE, payload: optimistic });
+
+    api
+      .updateNote(id, { title, content })
+      .then((server) => {
+        if (!server) {
+          // If server reports not found, rollback to previous
+          dispatch({ type: ACTIONS.UPDATE, payload: current });
+        } else {
+          dispatch({ type: ACTIONS.UPDATE, payload: server });
+        }
+      })
+      .catch(() => {
+        // Rollback on error
+        dispatch({ type: ACTIONS.UPDATE, payload: current });
+      });
+
+    return optimistic;
   }
 
   // PUBLIC_INTERFACE
   function deleteNote(id) {
+    const existing = getNote(id);
+    if (!existing) return;
+    // Optimistic remove
     dispatch({ type: ACTIONS.DELETE, payload: id });
+    api.deleteNote(id).catch(() => {
+      // Rollback on error
+      dispatch({ type: ACTIONS.CREATE, payload: existing });
+    });
   }
 
   const value = useMemo(
@@ -176,12 +202,4 @@ export function useNotes() {
   const ctx = useContext(NotesContext);
   if (!ctx) throw new Error("useNotes must be used within NotesProvider");
   return ctx;
-}
-
-/**
- * Simple ID generator using crypto or fallback.
- */
-function cryptoRandomId() {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
-  return "id_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
