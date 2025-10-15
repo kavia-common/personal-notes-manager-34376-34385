@@ -11,5 +11,17 @@
   color: var(--color-primary);
   font-weight: 600;
   text-decoration: none;
+  transition: color .2s ease, text-decoration .2s ease;
 }
 .link-like:hover { text-decoration: underline; }
+
+/* Buttons hover/active polish */
+button {
+  transition: transform .12s ease, box-shadow .12s ease, opacity .2s ease;
+}
+button:hover {
+  box-shadow: var(--shadow-md);
+}
+button:active {
+  transform: translateY(1px);
+}

@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
 import Button from "../common/Button";
+import Input from "../common/Input";
+import Textarea from "../common/Textarea";
 
 /**
  * PUBLIC_INTERFACE
@@ -39,18 +41,12 @@ export default function NoteForm({ initial, onCancel, onSubmit, submitLabel = "S
         <label htmlFor="title" style={{ display: "block", marginBottom: 6 }}>
           Title
         </label>
-        <input
+        <Input
           id="title"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="Note title"
-          style={{
-            width: "100%",
-            padding: "10px 12px",
-            borderRadius: 8,
-            border: "1px solid rgba(0,0,0,0.15)",
-            background: "var(--color-surface)",
-          }}
+          aria-invalid={!!errors.title}
         />
         {errors.title && <div className="small-muted" style={{ color: "var(--color-error)" }}>{errors.title}</div>}
       </div>
@@ -59,20 +55,13 @@ export default function NoteForm({ initial, onCancel, onSubmit, submitLabel = "S
         <label htmlFor="content" style={{ display: "block", marginBottom: 6 }}>
           Content
         </label>
-        <textarea
+        <Textarea
           id="content"
           value={content}
           onChange={(e) => setContent(e.target.value)}
           placeholder="Write your note…"
           rows={10}
-          style={{
-            width: "100%",
-            padding: "10px 12px",
-            borderRadius: 8,
-            border: "1px solid rgba(0,0,0,0.15)",
-            background: "var(--color-surface)",
-            resize: "vertical",
-          }}
+          aria-invalid={!!errors.content}
         />
         {errors.content && <div className="small-muted" style={{ color: "var(--color-error)" }}>{errors.content}</div>}
       </div>

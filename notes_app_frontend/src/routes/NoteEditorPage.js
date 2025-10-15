@@ -1,8 +1,10 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import Card from "../components/common/Card";
 import NoteForm from "../components/notes/NoteForm";
 import { navigate } from "../router";
 import { useNotes } from "../state/notesStore";
+import Spinner from "../components/common/Spinner";
+import { useToast } from "../components/common/Toast";
 
 /**
  * PUBLIC_INTERFACE
@@ -11,7 +13,10 @@ import { useNotes } from "../state/notesStore";
  */
 export default function NoteEditorPage({ params = {} }) {
   const isEdit = Boolean(params.id);
-  const { getNote, createNote, updateNote } = useNotes();
+  const { getNote, createNote, updateNote, loading } = useNotes();
+  const { success, error } = useToast();
+  const [submitting, setSubmitting] = useState(false);
+
   const existing = useMemo(() => (isEdit ? getNote(params.id) : null), [isEdit, params.id, getNote]);
 
   const onCancel = () => {
@@ -19,13 +24,26 @@ export default function NoteEditorPage({ params = {} }) {
     else navigate("/");
   };
 
-  const handleSubmit = (payload) => {
-    if (isEdit) {
-      const res = updateNote(params.id, payload);
-      if (res) navigate(`/notes/${params.id}`);
-    } else {
-      const created = createNote(payload);
-      navigate(`/notes/${created.id}`);
+  const handleSubmit = async (payload) => {
+    setSubmitting(true);
+    try {
+      if (isEdit) {
+        const res = await updateNote(params.id, payload);
+        if (res) {
+          success("Note updated");
+          navigate(`/notes/${params.id}`);
+        } else {
+          error("Failed to update note");
+        }
+      } else {
+        const created = await createNote(payload);
+        success("Note created");
+        navigate(`/notes/${created.id}`);
+      }
+    } catch {
+      error(isEdit ? "Failed to update note" : "Failed to create note");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -34,15 +52,22 @@ export default function NoteEditorPage({ params = {} }) {
   return (
     <div className="container">
       <Card title={headerTitle}>
-        {isEdit && !existing ? (
+        {(loading || submitting) && (
+          <div style={{ paddingBottom: 12 }}>
+            <Spinner label={submitting ? "Saving…" : "Loading…"} />
+          </div>
+        )}
+        {isEdit && !existing && !loading ? (
           <div className="small-muted">This note does not exist.</div>
         ) : (
-          <NoteForm
-            initial={existing ? { title: existing.title, content: existing.content } : { title: "", content: "" }}
-            onCancel={onCancel}
-            onSubmit={handleSubmit}
-            submitLabel={isEdit ? "Update" : "Save"}
-          />
+          !loading && (
+            <NoteForm
+              initial={existing ? { title: existing.title, content: existing.content } : { title: "", content: "" }}
+              onCancel={onCancel}
+              onSubmit={handleSubmit}
+              submitLabel={isEdit ? "Update" : "Save"}
+            />
+          )
         )}
       </Card>
     </div>

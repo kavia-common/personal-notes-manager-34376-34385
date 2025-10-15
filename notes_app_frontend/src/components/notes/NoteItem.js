@@ -1,7 +1,9 @@
-import React from "react";
+import React, { useState } from "react";
 import Button from "../common/Button";
 import { navigate } from "../../router";
 import { useNotes } from "../../state/notesStore";
+import ConfirmDialog from "../common/ConfirmDialog";
+import { useToast } from "../common/Toast";
 
 /**
  * PUBLIC_INTERFACE
@@ -9,14 +11,21 @@ import { useNotes } from "../../state/notesStore";
  */
 export default function NoteItem({ note }) {
   const { deleteNote } = useNotes();
+  const { success, error } = useToast();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
   const snippet =
     note.content.length > 140 ? note.content.slice(0, 140) + "…" : note.content;
 
   const onView = () => navigate(`/notes/${note.id}`);
   const onEdit = () => navigate(`/notes/${note.id}/edit`);
-  const onDelete = () => {
-    const ok = window.confirm("Delete this note?");
-    if (ok) deleteNote(note.id);
+  const onDelete = () => setConfirmOpen(true);
+
+  const handleConfirm = async () => {
+    setConfirmOpen(false);
+    const ok = await deleteNote(note.id);
+    if (ok) success("Note deleted");
+    else error("Failed to delete note");
   };
 
   return (
@@ -35,6 +44,16 @@ export default function NoteItem({ note }) {
         <Button variant="primary" onClick={onEdit}>Edit</Button>
         <Button variant="danger" onClick={onDelete}>Delete</Button>
       </div>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Delete this note?"
+        message="This action cannot be undone."
+        confirmText="Delete"
+        cancelText="Cancel"
+        onConfirm={handleConfirm}
+        onCancel={() => setConfirmOpen(false)}
+      />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import * as api from "../services/api";
 
 /**
@@ -9,6 +9,8 @@ const ACTIONS = {
   CREATE: "CREATE",
   UPDATE: "UPDATE",
   DELETE: "DELETE",
+  SET_LOADING: "SET_LOADING",
+  SET_ERROR: "SET_ERROR",
 };
 
 /**
@@ -17,22 +19,28 @@ const ACTIONS = {
 function reducer(state, action) {
   switch (action.type) {
     case ACTIONS.INIT: {
-      return { ...state, notes: action.payload || [] };
+      return { ...state, notes: action.payload || [], loading: false, error: null };
     }
     case ACTIONS.CREATE: {
       const note = action.payload;
       const notes = [note, ...state.notes];
-      return { ...state, notes };
+      return { ...state, notes, loading: false };
     }
     case ACTIONS.UPDATE: {
       const upd = action.payload;
       const notes = state.notes.map((n) => (n.id === upd.id ? { ...n, ...upd } : n));
-      return { ...state, notes };
+      return { ...state, notes, loading: false };
     }
     case ACTIONS.DELETE: {
       const id = action.payload;
       const notes = state.notes.filter((n) => n.id !== id);
-      return { ...state, notes };
+      return { ...state, notes, loading: false };
+    }
+    case ACTIONS.SET_LOADING: {
+      return { ...state, loading: action.payload };
+    }
+    case ACTIONS.SET_ERROR: {
+      return { ...state, error: action.payload, loading: false };
     }
     default:
       return state;
@@ -48,12 +56,14 @@ export const NotesContext = createContext(null);
  * Uses an API layer (mock by default) with Promise-based operations.
  */
 export function NotesProvider({ children }) {
-  const [state, dispatch] = useReducer(reducer, { notes: [] });
+  const [state, dispatch] = useReducer(reducer, { notes: [], loading: true, error: null });
   const mountedRef = useRef(true);
+  const [lastAction, setLastAction] = useState(null); // for debugging/telemetry if needed
 
   useEffect(() => {
     mountedRef.current = true;
     // Initialize from API once (async)
+    dispatch({ type: ACTIONS.SET_LOADING, payload: true });
     api
       .listNotes()
       .then((list) => {
@@ -63,6 +73,7 @@ export function NotesProvider({ children }) {
       })
       .catch((e) => {
         console.warn("NotesProvider: failed to initialize notes", e);
+        dispatch({ type: ACTIONS.SET_ERROR, payload: "Failed to load notes" });
         dispatch({ type: ACTIONS.INIT, payload: [] });
       });
     return () => {
@@ -94,8 +105,8 @@ export function NotesProvider({ children }) {
 
   // PUBLIC_INTERFACE
   function createNote({ title, content }) {
-    // Optimistic approach: rely on API to generate canonical note with IDs/timestamps
-    // but return a promise result synchronously to match current calling style.
+    dispatch({ type: ACTIONS.SET_LOADING, payload: true });
+    setLastAction("create");
     const p = api
       .createNote({ title, content })
       .then((created) => {
@@ -104,14 +115,11 @@ export function NotesProvider({ children }) {
       })
       .catch((e) => {
         console.warn("createNote failed", e);
+        dispatch({ type: ACTIONS.SET_ERROR, payload: "Failed to create note" });
         throw e;
       });
 
-    // For backward compatibility with existing sync usage, return a placeholder
-    // that will be quickly reconciled when promise resolves.
-    // However, routes currently use the return value immediately.
-    // To preserve behavior, we temporarily create a local placeholder and dispatch,
-    // then reconcile when API returns. Mock service returns quickly with same data format.
+    // Optimistic placeholder
     const tempNow = new Date().toISOString();
     const temp = {
       id: "temp_" + Math.random().toString(36).slice(2),
@@ -120,26 +128,28 @@ export function NotesProvider({ children }) {
       createdAt: tempNow,
       updatedAt: tempNow,
     };
-    // Dispatch optimistic item to keep UI snappy
     dispatch({ type: ACTIONS.CREATE, payload: temp });
-    // Reconcile on resolve: replace temp by actual created
     p.then((created) => {
       if (created && created.id !== temp.id) {
         dispatch({ type: ACTIONS.DELETE, payload: temp.id });
         dispatch({ type: ACTIONS.CREATE, payload: created });
       }
     }).catch(() => {
-      // rollback optimistic insert
       dispatch({ type: ACTIONS.DELETE, payload: temp.id });
     });
 
-    return temp;
+    return p;
   }
 
   // PUBLIC_INTERFACE
   function updateNote(id, { title, content }) {
     const current = getNote(id);
-    if (!current) return null;
+    if (!current) {
+      dispatch({ type: ACTIONS.SET_ERROR, payload: "Note not found" });
+      return Promise.resolve(null);
+    }
+    dispatch({ type: ACTIONS.SET_LOADING, payload: true });
+    setLastAction("update");
 
     const optimistic = {
       ...current,
@@ -149,46 +159,61 @@ export function NotesProvider({ children }) {
     };
     dispatch({ type: ACTIONS.UPDATE, payload: optimistic });
 
-    api
+    return api
       .updateNote(id, { title, content })
       .then((server) => {
         if (!server) {
-          // If server reports not found, rollback to previous
           dispatch({ type: ACTIONS.UPDATE, payload: current });
+          dispatch({ type: ACTIONS.SET_ERROR, payload: "Failed to update note" });
+          return null;
         } else {
           dispatch({ type: ACTIONS.UPDATE, payload: server });
+          return server;
         }
       })
       .catch(() => {
-        // Rollback on error
         dispatch({ type: ACTIONS.UPDATE, payload: current });
+        dispatch({ type: ACTIONS.SET_ERROR, payload: "Failed to update note" });
+        return null;
       });
-
-    return optimistic;
   }
 
   // PUBLIC_INTERFACE
   function deleteNote(id) {
     const existing = getNote(id);
-    if (!existing) return;
+    if (!existing) {
+      dispatch({ type: ACTIONS.SET_ERROR, payload: "Note not found" });
+      return Promise.resolve(false);
+    }
+    dispatch({ type: ACTIONS.SET_LOADING, payload: true });
+    setLastAction("delete");
+
     // Optimistic remove
     dispatch({ type: ACTIONS.DELETE, payload: id });
-    api.deleteNote(id).catch(() => {
-      // Rollback on error
-      dispatch({ type: ACTIONS.CREATE, payload: existing });
-    });
+    return api.deleteNote(id).then(
+      () => true,
+      () => {
+        // Rollback on error
+        dispatch({ type: ACTIONS.CREATE, payload: existing });
+        dispatch({ type: ACTIONS.SET_ERROR, payload: "Failed to delete note" });
+        return false;
+      }
+    );
   }
 
   const value = useMemo(
     () => ({
       notes: state.notes,
+      loading: !!state.loading,
+      error: state.error,
+      lastAction,
       listNotes,
       getNote,
       createNote,
       updateNote,
       deleteNote,
     }),
-    [state.notes]
+    [state.notes, state.loading, state.error, lastAction]
   );
 
   return <NotesContext.Provider value={value}>{children}</NotesContext.Provider>;
