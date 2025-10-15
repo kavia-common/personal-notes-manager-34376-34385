@@ -1,81 +1,49 @@
-import React, { useState } from "react";
+import React, { useMemo } from "react";
 import Card from "../components/common/Card";
-import Button from "../components/common/Button";
+import NoteForm from "../components/notes/NoteForm";
 import { navigate } from "../router";
+import { useNotes } from "../state/notesStore";
 
 /**
  * PUBLIC_INTERFACE
- * NoteEditorPage handles creating and editing notes (mock form).
+ * NoteEditorPage handles creating and editing notes using the notesStore.
  * Accepts routeProps: { params }
  */
 export default function NoteEditorPage({ params = {} }) {
   const isEdit = Boolean(params.id);
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
+  const { getNote, createNote, updateNote } = useNotes();
+  const existing = useMemo(() => (isEdit ? getNote(params.id) : null), [isEdit, params.id, getNote]);
 
   const onCancel = () => {
-    if (isEdit) navigate(`/notes/${params.id}`);
+    if (isEdit && existing) navigate(`/notes/${params.id}`);
     else navigate("/");
   };
 
-  const onSave = () => {
-    // Placeholder save; integrate with API later
-    alert("Saved (mock). Returning to list.");
-    navigate("/");
+  const handleSubmit = (payload) => {
+    if (isEdit) {
+      const res = updateNote(params.id, payload);
+      if (res) navigate(`/notes/${params.id}`);
+    } else {
+      const created = createNote(payload);
+      navigate(`/notes/${created.id}`);
+    }
   };
+
+  const headerTitle = isEdit ? (existing ? "Edit Note" : "Note Not Found") : "New Note";
 
   return (
     <div className="container">
-      <Card
-        title={isEdit ? "Edit Note" : "New Note"}
-        actions={
-          <div style={{ display: "flex", gap: 8 }}>
-            <Button variant="secondary" onClick={onCancel}>Cancel</Button>
-            <Button variant="primary" onClick={onSave}>{isEdit ? "Update" : "Save"}</Button>
-          </div>
-        }
-      >
-        <div style={{ display: "grid", gap: 12 }}>
-          <div>
-            <label htmlFor="title" style={{ display: "block", marginBottom: 6 }}>
-              Title
-            </label>
-            <input
-              id="title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Note title"
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                borderRadius: 8,
-                border: "1px solid rgba(0,0,0,0.15)",
-                background: "var(--color-surface)",
-              }}
-            />
-          </div>
-
-          <div>
-            <label htmlFor="body" style={{ display: "block", marginBottom: 6 }}>
-              Content
-            </label>
-            <textarea
-              id="body"
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              placeholder="Write your note…"
-              rows={10}
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                borderRadius: 8,
-                border: "1px solid rgba(0,0,0,0.15)",
-                background: "var(--color-surface)",
-                resize: "vertical",
-              }}
-            />
-          </div>
-        </div>
+      <Card title={headerTitle}>
+        {isEdit && !existing ? (
+          <div className="small-muted">This note does not exist.</div>
+        ) : (
+          <NoteForm
+            initial={existing ? { title: existing.title, content: existing.content } : { title: "", content: "" }}
+            onCancel={onCancel}
+            onSubmit={handleSubmit}
+            submitLabel={isEdit ? "Update" : "Save"}
+          />
+        )}
       </Card>
     </div>
   );
