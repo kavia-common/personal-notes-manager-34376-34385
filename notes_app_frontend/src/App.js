@@ -1,49 +1,54 @@
-import React, { useState, useEffect } from 'react';
-import logo from './logo.svg';
-import './App.css';
+import React, { useEffect, useState } from "react";
+import "./App.css";
+import "./theme.css";
+import Sidebar from "./components/Layout/Sidebar";
+import Topbar from "./components/Layout/Topbar";
+import NotesListPage from "./routes/NotesListPage";
+import NoteEditorPage from "./routes/NoteEditorPage";
+import NoteViewPage from "./routes/NoteViewPage";
+import NotFoundPage from "./routes/NotFoundPage";
+import { createRouter, getCurrentPath, subscribe } from "./router";
 
-// PUBLIC_INTERFACE
-function App() {
-  const [theme, setTheme] = useState('light');
+/**
+ * PUBLIC_INTERFACE
+ * App shell that composes the minimal router with Ocean theme layout.
+ */
+export default function App() {
+  // Initialize theme from localStorage for initial paint consistency.
+  const [theme, setTheme] = useState(() => {
+    const saved = localStorage.getItem("theme");
+    return saved || "light";
+  });
 
-  // Effect to apply theme to document element
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("theme", theme);
   }, [theme]);
 
-  // PUBLIC_INTERFACE
-  const toggleTheme = () => {
-    setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
-  };
+  // Router wiring
+  const [path, setPath] = useState(getCurrentPath());
+  useEffect(() => {
+    const unsub = subscribe(setPath);
+    return unsub;
+  }, []);
+
+  const routes = [
+    { path: "/", component: NotesListPage },
+    { path: "/notes/new", component: (props) => <NoteEditorPage {...props} /> },
+    { path: "/notes/:id", component: (props) => <NoteViewPage {...props} /> },
+    { path: "/notes/:id/edit", component: (props) => <NoteEditorPage {...props} /> },
+  ];
+  const router = createRouter(routes, NotFoundPage);
+  const resolved = router.resolve(path);
+  const Active = resolved.component;
 
   return (
-    <div className="App">
-      <header className="App-header">
-        <button 
-          className="theme-toggle" 
-          onClick={toggleTheme}
-          aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
-        >
-          {theme === 'light' ? '🌙 Dark' : '☀️ Light'}
-        </button>
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <p>
-          Current theme: <strong>{theme}</strong>
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
+    <div className="app-shell" role="application">
+      <Sidebar />
+      <Topbar />
+      <main className="content" id="main">
+        <Active params={resolved.params} path={resolved.path} />
+      </main>
     </div>
   );
 }
-
-export default App;
